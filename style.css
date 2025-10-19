@@ -1,13 +1,19 @@
-body {
-  margin: 0;
-  padding: 0;
-  background-color: #222;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
+html,body{
+  height:100%;
+  margin:0;
+  background:#111;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-family:monospace;
+  color:#fff;
 }
-
-#game {
-  border: 4px solid #fff;
+#game-container{
+  border:4px solid #fff;
+}
+.hud {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  color: #000;
 }
