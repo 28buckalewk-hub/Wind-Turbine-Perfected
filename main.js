@@ -1,4 +1,4 @@
-// main.js — Pixel-built sprites, scrolling, distance, lives
+// main.js - Final Wind Turbine Climb (pixel-built sprites, win/lose + restart)
 
 const WIDTH = 480;
 const HEIGHT = 640;
@@ -16,299 +16,423 @@ const config = {
 const game = new Phaser.Game(config);
 
 // Game state
-let player, playerFrameTimer = 0, playerFrame = 0;
-let birdsFalling, birdsFlying, clouds;
+let player;
+let birdsFalling, birdsFlying;
+let clouds;
 let ladders;
-let lives = 3;
-let livesText, distanceText;
-let distanceFt = 200; // starts at 200 ft
-let gameOver = false;
 let turretTop;
-let climbThresholdY = 150; // y at which player stops moving up and scene scrolls instead
-let scrollOffset = 0; // how far we've scrolled
+let keys;
+let distanceFt = 200;
+let distanceText, livesText;
+let lives = 3;
+let gameOver = false;
+let scrollOffset = 0;
+let climbThresholdY = 150; // when player hits this Y, scene scrolls instead of player moving up
+let playerAnimTimer = 0;
+let playerFrame = 0;
+let winOverlay, loseOverlay, restartButton;
 let lastDelta = 16;
 
+// Bird tuning: 1.5x faster (base ranges multiplied), spawn delays 1.3x less frequent (delays multiplied)
+const FLY_VX_MIN = 112;   // px/s
+const FLY_VX_MAX = 165;   // px/s
+const FALL_VY_MIN = 75;   // px/s
+const FALL_VY_MAX = 150;  // px/s
+
+const BASE_FALL_SPAWN = 900;   // ms (older baseline)
+const BASE_FLY_SPAWN  = 1200;  // ms
+const SPAWN_MULTIPLIER = 1.3;  // less frequent => multiply delay
+const FALL_SPAWN_DELAY = Math.round(BASE_FALL_SPAWN * SPAWN_MULTIPLIER); // ~1170
+const FLY_SPAWN_DELAY  = Math.round(BASE_FLY_SPAWN * SPAWN_MULTIPLIER);  // ~1560
+
 function preload() {
-  // nothing external
+  // no external files; we will generate textures in create()
 }
 
 function create() {
-  const scene = this;
-
-  // --- Generate bird textures (24x24) as pixel art ---
+  // ------------- generate pixel textures via Graphics -------------
   const g = this.add.graphics();
-  // bird frame 0: falling (wings up)
-  g.clear();
-  g.fillStyle(0x111111, 1); // outline
-  g.fillRect(1, 1, 22, 22);
-  g.fillStyle(0x8a4b2b, 1); // brown body
-  g.fillRect(3, 6, 16, 8);
-  g.fillStyle(0xe6b899, 1); // belly
-  g.fillRect(6, 10, 8, 4);
-  g.fillStyle(0xffa500, 1); // beak
-  g.fillRect(19, 10, 3, 2);
-  this.textures.addCanvas('bird0', g.generateTexture('bird0', 24, 24));
 
-  // bird frame 1: fly A
+  // BIRD: 24x24 frames, transparent background (don't clear to a filled rect)
+  // frame 0: falling (wings up)
   g.clear();
-  g.fillStyle(0x111111, 1); g.fillRect(1, 1, 22, 22);
-  g.fillStyle(0x8a4b2b, 1); g.fillRect(3, 8, 16, 6);
-  g.fillStyle(0xe6b899, 1); g.fillRect(6, 10, 8, 4);
-  g.fillStyle(0xffa500, 1); g.fillRect(19, 10, 3, 2);
-  // wing up
-  g.fillStyle(0x6b3a25, 1); g.fillRect(-1 + 3, 4, 8, 4);
-  this.textures.addCanvas('bird1', g.generateTexture('bird1', 24, 24));
+  drawBirdFalling(g);
+  g.generateTexture('bird0', 24, 24);
 
-  // bird frame 2: fly B
+  // frame 1: flying A
   g.clear();
-  g.fillStyle(0x111111, 1); g.fillRect(1, 1, 22, 22);
-  g.fillStyle(0x8a4b2b, 1); g.fillRect(3, 8, 16, 6);
-  g.fillStyle(0xe6b899, 1); g.fillRect(6, 10, 8, 4);
-  g.fillStyle(0xffa500, 1); g.fillRect(19, 10, 3, 2);
-  // wing down
-  g.fillStyle(0x6b3a25, 1); g.fillRect(14, 12, 8, 4);
-  this.textures.addCanvas('bird2', g.generateTexture('bird2', 24, 24));
-  g.clear();
+  drawBirdFlyA(g);
+  g.generateTexture('bird1', 24, 24);
 
-  // --- Generate climber frames (32x32) as pixel-art ---
-  // climber frame 0 (left arm up)
-  g.fillStyle(0x000000, 1); g.fillRect(0,0,32,32); // temporary to clear but invisible background not needed
+  // frame 2: flying B
   g.clear();
-  // head
-  g.fillStyle(0xffcc99,1); g.fillRect(12,2,8,8);
-  // cap
-  g.fillStyle(0xd32f2f,1); g.fillRect(10,0,12,4);
-  // body / backpack detail
-  g.fillStyle(0x1b7be0,1); g.fillRect(12,10,8,10);
-  g.fillStyle(0xffd23b,1); g.fillRect(6,10,6,8); // backpack left
-  // left arm up (frame 0)
-  g.fillStyle(0xd32f2f,1); g.fillRect(8,8,4,10);
-  // right arm down
-  g.fillStyle(0xd32f2f,1); g.fillRect(20,14,4,10);
-  // legs
-  g.fillStyle(0x244f8a,1); g.fillRect(12,20,4,10);
-  g.fillStyle(0x244f8a,1); g.fillRect(16,20,4,10);
-  this.textures.addCanvas('climber0', g.generateTexture('climber0', 32, 32));
-  g.clear();
+  drawBirdFlyB(g);
+  g.generateTexture('bird2', 24, 24);
 
-  // climber frame 1 (right arm up)
-  // draw similar but flip arms
-  g.fillStyle(0xffcc99,1); g.fillRect(12,2,8,8);
-  g.fillStyle(0xd32f2f,1); g.fillRect(10,0,12,4);
-  g.fillStyle(0x1b7be0,1); g.fillRect(12,10,8,10);
-  g.fillStyle(0xffd23b,1); g.fillRect(6,10,6,8);
-  // left arm down
-  g.fillStyle(0xd32f2f,1); g.fillRect(8,14,4,10);
-  // right arm up
-  g.fillStyle(0xd32f2f,1); g.fillRect(20,8,4,10);
-  // legs
-  g.fillStyle(0x244f8a,1); g.fillRect(12,20,4,10);
-  g.fillStyle(0x244f8a,1); g.fillRect(16,20,4,10);
-  this.textures.addCanvas('climber1', g.generateTexture('climber1', 32, 32));
+  // CLIMBER: two frames 32x32 (climb frames)
+  g.clear();
+  drawClimberFrameLeftArm(g);
+  g.generateTexture('climber0', 32, 32);
+
+  g.clear();
+  drawClimberFrameRightArm(g);
+  g.generateTexture('climber1', 32, 32);
+
   g.destroy();
 
-  // --- Scene objects ---
-  // clouds group (simple rectangles)
+  // ------------- scene elements -------------
+  // Clouds group (rectangles)
   clouds = this.add.group();
-  for (let i=0;i<6;i++){
+  for (let i = 0; i < 6; i++) {
     const c = this.add.rectangle(
-      Phaser.Math.Between(30, WIDTH-30),
+      Phaser.Math.Between(30, WIDTH - 30),
       Phaser.Math.Between(0, HEIGHT),
-      Phaser.Math.Between(60,110),
-      26,
-      0xffffff, 0.85
+      Phaser.Math.Between(60, 120),
+      24,
+      0xffffff,
+      0.85
     );
     clouds.add(c);
   }
 
-  // ladders (two lanes) — visible vertical rectangles with rungs
-  ladders = [WIDTH/3, (WIDTH/3)*2];
+  // Ladders: two lanes with poles and rungs
+  ladders = [WIDTH / 3, (WIDTH / 3) * 2];
   ladders.forEach(x => {
-    // pole
-    this.add.rectangle(x, HEIGHT/2, 18, HEIGHT, 0xffffff);
-    // rungs
-    for (let ry=40; ry<HEIGHT; ry+=40){
-      this.add.rectangle(x, ry, 28, 6, 0x888888);
+    this.add.rectangle(x, HEIGHT / 2, 18, HEIGHT, 0xffffff);
+    for (let ry = 40; ry < HEIGHT; ry += 40) {
+      this.add.rectangle(x, ry, 36, 6, 0x888888);
     }
   });
 
-  // turbine top (start offscreen above)
-  turretTop = this.add.rectangle(WIDTH/2, -300, WIDTH * 1.1, 70, 0xaaaaaa);
-  // outline
-  this.add.rectangle(WIDTH/2, -300, WIDTH * 1.1, 70).setStrokeStyle(2, 0x666666);
+  // Turbine top (off-screen initially, will scroll down when climbing)
+  turretTop = this.add.container(WIDTH / 2, -300);
+  const topBase = this.add.rectangle(0, 0, WIDTH * 1.1, 70, 0xaaaaaa);
+  const topOutline = this.add.rectangle(0, 0, WIDTH * 1.1, 70).setStrokeStyle(2, 0x666666);
+  turretTop.add([topBase, topOutline]);
+  turretTop.setDepth(2);
 
-  // --- Player sprite created from generated textures ---
+  // ------------- player (physics sprite using generated texture) -------------
   player = this.physics.add.sprite(ladders[0], HEIGHT - 120, 'climber0');
-  player.setOrigin(0.5, 0.5);
   player.setDisplaySize(32, 32);
-  player.body.setSize(20, 32);
+  player.setOrigin(0.5, 0.5);
+  player.body.setSize(18, 28);
   player.setCollideWorldBounds(true);
 
-  // animation state for climber (we'll toggle textures manually)
-  playerFrame = 0;
-  playerFrameTimer = 0;
+  // ------------- birds groups -------------
+  birdsFalling = this.physics.add.group();
+  birdsFlying = this.physics.add.group();
 
-  // --- Birds groups ---
-  birdsFalling = this.add.group(); // we will use containers for wing animation or sprites
-  birdsFlying = this.add.group();
-
-  // create simple overlap detection using arcade bodies (add bodies to groups)
+  // collision handlers (overlaps)
   this.physics.add.overlap(player, birdsFalling, onHitBird, null, this);
   this.physics.add.overlap(player, birdsFlying, onHitBird, null, this);
 
   // HUD
-  distanceText = this.add.text(12, 10, 'Height: 200.0 ft', { fontSize: '18px', color: '#000' });
-  livesText = this.add.text(12, 34, 'Lives: 3', { fontSize: '18px', color: '#000' });
+  distanceText = this.add.text(12, 10, 'Height: 200.0 ft', { fontSize: '18px', color: '#000' }).setDepth(10);
+  livesText = this.add.text(12, 36, 'Lives: 3', { fontSize: '18px', color: '#000' }).setDepth(10);
 
   // input
-  this.keys = this.input.keyboard.addKeys({ W: 'W', S: 'S', A: 'A', D: 'D' });
+  keys = this.input.keyboard.addKeys({ W: 'W', S: 'S', A: 'A', D: 'D' });
 
-  // spawners
-  this.time.addEvent({ delay: 900, callback: spawnFallingBird, callbackScope: this, loop: true });
-  this.time.addEvent({ delay: 1200, callback: spawnFlyingBird, callbackScope: this, loop: true });
+  // spawners (less frequent by multiplier)
+  this.time.addEvent({ delay: FALL_SPAWN_DELAY, loop: true, callback: spawnFallingBird, callbackScope: this });
+  this.time.addEvent({ delay: FLY_SPAWN_DELAY, loop: true, callback: spawnFlyingBird, callbackScope: this });
+
+  // overlays (hidden initially)
+  winOverlay = createOverlayContainer(this, 0x00aa00, 'You Reached the Top!');
+  loseOverlay = createOverlayContainer(this, 0xaa0000, 'GAME OVER');
+
+  // pixel restart button created but hidden; will be shown on win/lose
+  restartButton = createPixelButton(this, WIDTH / 2, HEIGHT / 2 + 60, '▶ RESTART');
+  restartButton.setVisible(false);
+  restartButton.getByName('btn').setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+    restartGame(this);
+  });
 }
 
 function update(time, delta) {
   if (gameOver) return;
   lastDelta = delta;
 
-  const keys = this.keys;
-  const climbSpeed = 120 * (delta/1000); // pixels per frame scaled
-  let climbing = false;
+  const climbPx = 120 * (delta / 1000); // base climb speed px per frame scaled
 
-  // climb up
+  let isClimbingUp = false;
+
+  // Up
   if (keys.W.isDown) {
-    // if above threshold, scroll scene; else move player up
+    // if player above threshold, scroll scene instead of moving player up
     if (player.y > climbThresholdY) {
-      player.y -= climbSpeed;
+      player.y -= climbPx;
     } else {
-      // scroll clouds, birds, turretTop downward to simulate ascent
-      clouds.getChildren().forEach(c => { c.y += climbSpeed * 0.5; if (c.y > HEIGHT+30) c.y = -30; });
-      // move birds downwards to keep relative position
-      birdsFalling.getChildren().forEach(b => { b.y += climbSpeed; if (b.y > HEIGHT+50) b.destroy(); });
-      birdsFlying.getChildren().forEach(b => { b.y += climbSpeed; if (b.y > HEIGHT+50) b.destroy(); });
-      turretTop.y += climbSpeed;
-      scrollOffset += climbSpeed;
+      // scroll all scenery downwards to simulate upward motion
+      clouds.getChildren().forEach(c => {
+        c.y += climbPx * 0.5;
+        if (c.y > HEIGHT + 30) c.y = -30;
+      });
+      // move birds downward relative to screen so they appear to stay in world
+      birdsFalling.getChildren().forEach(b => { b.y += climbPx; if (b.y > HEIGHT + 50) b.destroy(); });
+      birdsFlying.getChildren().forEach(b => { b.y += climbPx; if (b.y > HEIGHT + 50) b.destroy(); });
+      turretTop.y += climbPx;
+      scrollOffset += climbPx;
     }
-    climbing = true;
+    isClimbingUp = true;
   }
-  // descend
+
+  // Down
   if (keys.S.isDown) {
-    player.y += climbSpeed;
-    climbing = true;
+    // allow moving down, but do not increase distance (as requested earlier)
+    player.y += climbPx;
   }
 
-  // ladder switch A/D (instant)
-  if (Phaser.Input.Keyboard.JustDown(keys.A)) player.x = ladders[0];
-  if (Phaser.Input.Keyboard.JustDown(keys.D)) player.x = ladders[1];
+  // Ladders switch A/D instant
+  if (Phaser.Input.Keyboard.JustDown(keys.A)) {
+    player.x = ladders[0];
+  }
+  if (Phaser.Input.Keyboard.JustDown(keys.D)) {
+    player.x = ladders[1];
+  }
 
-  // Player frame animation while moving (swap frames every 150ms)
-  if (climbing) {
-    playerFrameTimer += delta;
-    if (playerFrameTimer >= 150) {
-      playerFrameTimer = 0;
-      playerFrame = 1 - playerFrame; // toggle 0/1
+  // Climber frame animation (toggle while climbing)
+  if (isClimbingUp || keys.S.isDown) {
+    playerAnimTimer += delta;
+    if (playerAnimTimer > 150) {
+      playerAnimTimer = 0;
+      playerFrame = 1 - playerFrame;
       player.setTexture(playerFrame === 0 ? 'climber0' : 'climber1');
     }
   } else {
-    // idle frame
     player.setTexture('climber0');
   }
 
-  // Decrease distance only while climbing up (active W press)
+  // Distance decreases only while actively holding W (climbing up)
   if (keys.W.isDown) {
-    // Reduce 200 ft over ~30 seconds of continuous climbing
+    // reduce 200 ft over ~30,000 ms (30 seconds) continuous climbing
     const decreasePerMs = 200 / 30000; // ft per ms
     distanceFt -= decreasePerMs * delta;
     if (distanceFt < 0) distanceFt = 0;
     distanceText.setText('Height: ' + distanceFt.toFixed(1) + ' ft');
   }
 
-  // If turbine top is scrolled into visible area (near top of screen) and distance == 0 => win
-  if (distanceFt <= 0) {
-    endGame(true, this);
+  // If reached 0 ft and turretTop has scrolled into visible region (we only check distance here),
+  // show win (we will also place climber on top visually)
+  if (distanceFt <= 0 && !gameOver) {
+    triggerWin(this);
   }
 
-  // Move birds (flying have vx property)
+  // Update birds movement (flying horizontal only or falling vertical only)
   birdsFlying.getChildren().forEach(b => {
-    b.x += (b.vx * (delta/1000)); // vx already low, ms-based
-    // wing animation handled using frame swap timer property
-    b.frameTimer = (b.frameTimer || 0) + delta;
-    if (b.frameTimer >= 220) {
-      b.frameTimer = 0;
-      b.currentFrame = 1 + ((b.currentFrame === 1) ? 2 : 1); // toggle 1/2
-      b.setTexture(b.currentFrame === 1 ? 'bird1' : 'bird2');
+    // vx is px/sec
+    b.x += b.vx * (delta / 1000);
+    // wing animation swap (frame toggle)
+    b._frameTimer = (b._frameTimer || 0) + delta;
+    if (b._frameTimer >= 220) {
+      b._frameTimer = 0;
+      if (b._frame === 1) { b.setTexture('bird2'); b._frame = 2; }
+      else { b.setTexture('bird1'); b._frame = 1; }
     }
-    if (b.x < -40 || b.x > WIDTH + 40) {
-      b.destroy();
-    }
+    if (b.x < -40 || b.x > WIDTH + 40) b.destroy();
   });
 
   birdsFalling.getChildren().forEach(b => {
-    b.y += (b.vy * (delta/1000));
-    // slight rotation while falling
-    b.angle += b.spin * (delta/1000);
+    b.y += b.vy * (delta / 1000);
+    b.angle += b._spin * (delta / 1000); // cosmetic spin
     if (b.y > HEIGHT + 50) b.destroy();
   });
 }
 
-// --- Spawners & helpers ---
+// ---------- sprite drawing helpers (pixel art using Graphics) ----------
+
+function drawBirdFalling(g) {
+  // small, mostly transparent canvas, paint bird shapes
+  // body
+  g.fillStyle(0x8a4b2b, 1); g.fillRect(4, 6, 16, 8);
+  // belly
+  g.fillStyle(0xe6b899, 1); g.fillRect(7, 9, 8, 4);
+  // beak
+  g.fillStyle(0xffa500, 1); g.fillRect(19, 10, 3, 2);
+  // wing (up)
+  g.fillStyle(0x6b3a25, 1); g.fillRect(1, 3, 8, 4);
+  // subtle eye
+  g.fillStyle(0x000000, 1); g.fillRect(6, 9, 1, 1);
+}
+
+function drawBirdFlyA(g) {
+  g.fillStyle(0x8a4b2b, 1); g.fillRect(4, 8, 16, 6);
+  g.fillStyle(0xe6b899, 1); g.fillRect(7, 10, 8, 3);
+  g.fillStyle(0xffa500, 1); g.fillRect(19, 10, 3, 2);
+  // wing up a bit
+  g.fillStyle(0x6b3a25, 1); g.fillRect(1, 4, 8, 4);
+  g.fillStyle(0x000000, 1); g.fillRect(6, 10, 1, 1);
+}
+
+function drawBirdFlyB(g) {
+  g.fillStyle(0x8a4b2b, 1); g.fillRect(4, 8, 16, 6);
+  g.fillStyle(0xe6b899, 1); g.fillRect(7, 10, 8, 3);
+  g.fillStyle(0xffa500, 1); g.fillRect(19, 10, 3, 2);
+  // wing down
+  g.fillStyle(0x6b3a25, 1); g.fillRect(14, 12, 8, 4);
+  g.fillStyle(0x000000, 1); g.fillRect(6, 10, 1, 1);
+}
+
+function drawClimberFrameLeftArm(g) {
+  // minimal pixel shape in a 32x32 box
+  // head
+  g.fillStyle(0xffcc99, 1); g.fillRect(12, 4, 8, 8);
+  // cap
+  g.fillStyle(0xd32f2f, 1); g.fillRect(10, 2, 12, 3);
+  // body
+  g.fillStyle(0x1b7be0, 1); g.fillRect(12, 12, 8, 10);
+  // backpack
+  g.fillStyle(0xffd23b, 1); g.fillRect(6, 12, 6, 8);
+  // left arm up
+  g.fillStyle(0xd32f2f, 1); g.fillRect(8, 8, 4, 10);
+  // right arm down
+  g.fillStyle(0xd32f2f, 1); g.fillRect(20, 14, 4, 10);
+  // legs
+  g.fillStyle(0x244f8a, 1); g.fillRect(12, 22, 4, 8);
+  g.fillStyle(0x244f8a, 1); g.fillRect(16, 22, 4, 8);
+}
+
+function drawClimberFrameRightArm(g) {
+  g.fillStyle(0xffcc99, 1); g.fillRect(12, 4, 8, 8);
+  g.fillStyle(0xd32f2f, 1); g.fillRect(10, 2, 12, 3);
+  g.fillStyle(0x1b7be0, 1); g.fillRect(12, 12, 8, 10);
+  g.fillStyle(0xffd23b, 1); g.fillRect(6, 12, 6, 8);
+  // left arm down
+  g.fillStyle(0xd32f2f, 1); g.fillRect(8, 14, 4, 10);
+  // right arm up
+  g.fillStyle(0xd32f2f, 1); g.fillRect(20, 8, 4, 10);
+  g.fillStyle(0x244f8a, 1); g.fillRect(12, 22, 4, 8);
+  g.fillStyle(0x244f8a, 1); g.fillRect(16, 22, 4, 8);
+}
+
+// ---------- spawners ----------
 
 function spawnFallingBird() {
   if (gameOver) return;
-  // half the previous speed => lower vy
-  const vy = Phaser.Math.Between(50, 100);
+  const vy = Phaser.Math.Between(FALL_VY_MIN, FALL_VY_MAX); // px/s (faster = 1.5x)
   const x = Phaser.Math.Between(40, WIDTH - 40);
   const b = this.physics.add.sprite(x, -20, 'bird0');
-  b.setDisplaySize(24,24);
+  b.setDisplaySize(24, 24);
   b.vy = vy;
-  b.spin = Phaser.Math.FloatBetween(-80, 80); // degrees/sec for cosmetic spin
-  birdsFalling.add(b);
-  // give physics body for collision
+  b._spin = Phaser.Math.FloatBetween(-120, 120); // deg/sec cosmetic
   b.body.setAllowGravity(false);
+  birdsFalling.add(b);
 }
 
 function spawnFlyingBird() {
   if (gameOver) return;
   const fromLeft = Math.random() < 0.5;
-  const x = fromLeft ? -30 : WIDTH + 30;
-  const y = Phaser.Math.Between(80, HEIGHT - 120);
-  // half previous horizontal speed
-  const vx = (fromLeft ? Phaser.Math.Between(75, 110) : -Phaser.Math.Between(75, 110));
+  const x = fromLeft ? -40 : WIDTH + 40;
+  const y = Phaser.Math.Between(80, HEIGHT - 140);
+  const vx = (fromLeft ? Phaser.Math.Between(FLY_VX_MIN, FLY_VX_MAX) : -Phaser.Math.Between(FLY_VX_MIN, FLY_VX_MAX));
   const b = this.physics.add.sprite(x, y, 'bird1');
-  b.setDisplaySize(24,24);
-  b.vx = vx; // pixels/sec
-  b.currentFrame = 1;
-  b.frameTimer = 0;
-  birdsFlying.add(b);
+  b.setDisplaySize(24, 24);
+  b.vx = vx; // px/sec
+  b._frame = 1;
+  b._frameTimer = 0;
   b.body.setAllowGravity(false);
+  birdsFlying.add(b);
 }
 
-// hit detection
+// ---------- collisions & endgame ----------
+
 function onHitBird(playerSprite, birdSprite) {
   if (gameOver) return;
-  // destroy bird and lose a life
+  // destroy bird, lose life
   birdSprite.destroy();
   lives -= 1;
   livesText.setText('Lives: ' + lives);
-  // flash player
+  // flash
   player.setTint(0xff0000);
-  setTimeout(()=> player.clearTint(), 200);
+  setTimeout(() => player.clearTint(), 200);
 
   if (lives <= 0) {
-    endGame(false, this);
+    triggerLose(this);
   }
 }
 
-function endGame(won, scene) {
+function triggerWin(scene) {
   gameOver = true;
-  // show message
-  const msg = won ? 'You Reached The Top!' : 'GAME OVER';
-  scene.add.rectangle(WIDTH/2, HEIGHT/2, 340, 80, won ? 0x00aa00 : 0xaa0000);
-  scene.add.text(WIDTH/2, HEIGHT/2, msg, { fontSize: '24px', color: '#fff' }).setOrigin(0.5);
+  // Place climber on top of turbineTop (center)
+  // turretTop is container placed at turretTop.y; we position player on top center
+  const topY = turretTop.y; // y of top center
+  player.x = turretTop.x;
+  player.y = topY - 35; // just above top
+  player.setTexture('climber0');
+  // show overlay and restart button
+  winOverlay.setVisible(true);
+  restartButton.setVisible(true);
+  restartButton.setDepth(100);
 }
 
-// Simple turbine top show helper (if you want a one-time decoration)
-function showTurbineTopOnce(scene){
-  // not needed: turretTop exists and scrolls into screen as we climb
+function triggerLose(scene) {
+  gameOver = true;
+  loseOverlay.setVisible(true);
+  restartButton.setVisible(true);
+  restartButton.setDepth(100);
 }
+
+// ---------- UI helpers: overlays and pixel button ----------
+
+function createOverlayContainer(scene, color, text) {
+  const container = scene.add.container(0, 0).setDepth(90);
+  container.setVisible(false);
+  const rect = scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH - 60, 120, color);
+  const label = scene.add.text(WIDTH / 2, HEIGHT / 2, text, { fontSize: '28px', color: '#fff' }).setOrigin(0.5);
+  container.add([rect, label]);
+  return container;
+}
+
+function createPixelButton(scene, x, y, label) {
+  // red pixel-art button with a chunky border and block text
+  const container = scene.add.container(x, y).setDepth(95);
+  // base
+  const base = scene.add.rectangle(0, 0, 200, 44, 0xaa0000);
+  // inner border (lighter)
+  const inner = scene.add.rectangle(0, 0, 190, 34, 0xff3333);
+  // text (use larger font)
+  const txt = scene.add.text(0, 0, label, { fontSize: '18px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5);
+  // add a pixel border effect using small rectangles at corners (suggested retro look)
+  container.add([base, inner, txt]);
+  container.setVisible(false);
+  container.setSize(200, 44);
+  // name the button element for interactivity
+  container.add([base]);
+  container.getByName = (n) => base; // to keep compatibility
+  // store references to allow .setInteractive externally
+  container.getByName('btn'); // dummy; we'll return base directly in create()
+  // we will return container but expose the base as 'btn' for event hook
+  container.getByName = (n) => base;
+  return container;
+}
+
+// ---------- restart ----------
+
+function restartGame(scene) {
+  // destroy birds
+  birdsFalling.clear(true, true);
+  birdsFlying.clear(true, true);
+
+  // reset states
+  lives = 3;
+  livesText.setText('Lives: ' + lives);
+  distanceFt = 200;
+  distanceText.setText('Height: 200.0 ft');
+  gameOver = false;
+  scrollOffset = 0;
+
+  // hide overlays & button
+  winOverlay.setVisible(false);
+  loseOverlay.setVisible(false);
+  restartButton.setVisible(false);
+
+  // reset turret top position
+  turretTop.y = -300;
+
+  // reset player pos and texture
+  player.setTexture('climber0');
+  player.x = ladders[0];
+  player.y = HEIGHT - 120;
+  player.clearTint();
+}
+
